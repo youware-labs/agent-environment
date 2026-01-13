@@ -25,6 +25,9 @@ dependencies = [
     "typing-extensions>=4.0.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/youware-labs/agent-environment"
+
 
 [dependency-groups]
 dev = [
