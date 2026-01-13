@@ -1,0 +1,25 @@
+name: pre-commit-auto-format
+
+on:
+    push:
+        branches: [master, main]
+    pull_request:
+        branches: [master, main]
+permissions:
+    contents: write
+    pull-requests: write
+
+jobs:
+    pre-commit:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+            - uses: pre-commit/action@v3.0.0
+              continue-on-error: true
+              with:
+                  extra_args: --all-files
+            - uses: stefanzweifel/git-auto-commit-action@v5
+              with:
+                  commit_message: pre-commit auto format
+                  branch: ${{ github.head_ref || github.event.pull_request.head.ref || github.ref_name }}
