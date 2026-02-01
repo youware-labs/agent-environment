@@ -3,10 +3,14 @@
 This module defines runtime-checkable protocols for resources and operators.
 """
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from agent_environment.types import FileStat, TruncatedResult
+
+# Default chunk size for streaming operations (64KB)
+DEFAULT_CHUNK_SIZE = 65536
 
 
 @runtime_checkable
@@ -176,6 +180,19 @@ class TmpFileOperator(Protocol):
 
     async def list_dir(self, path: str) -> list[str]: ...
 
+    async def list_dir_with_types(self, path: str) -> list[tuple[str, bool]]:
+        """List directory contents with type information.
+
+        More efficient than calling list_dir + is_dir for each entry.
+
+        Args:
+            path: Directory path.
+
+        Returns:
+            List of (name, is_dir) tuples, sorted alphabetically.
+        """
+        ...
+
     async def exists(self, path: str) -> bool: ...
 
     async def is_file(self, path: str) -> bool: ...
@@ -194,6 +211,43 @@ class TmpFileOperator(Protocol):
 
     async def glob(self, pattern: str) -> list[str]:
         """Find files matching glob pattern."""
+        ...
+
+    def read_bytes_stream(
+        self,
+        path: str,
+        *,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read file content as an async stream of bytes.
+
+        Memory-efficient way to read large files.
+
+        Note: This method returns an async iterator directly (not a coroutine).
+        Call it without await: `stream = op.read_bytes_stream(path)`
+
+        Args:
+            path: Path to file.
+            chunk_size: Size of each chunk in bytes (default: 64KB).
+
+        Yields:
+            Chunks of bytes from the file.
+        """
+        ...
+
+    async def write_bytes_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write bytes stream to file.
+
+        Memory-efficient way to write large files.
+
+        Args:
+            path: Path to file.
+            stream: Async iterator yielding bytes chunks.
+        """
         ...
 
     async def truncate_to_tmp(
