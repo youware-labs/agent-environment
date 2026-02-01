@@ -423,6 +423,97 @@ async def test_registry_context_instructions_xml_format() -> None:
         assert "Instruction 1" in result
 
 
+# --- setup() Tests ---
+
+
+async def test_base_resource_default_setup() -> None:
+    """BaseResource should have no-op setup by default."""
+    resource = MinimalBaseResource()
+    await resource.setup()  # Should not raise
+
+
+async def test_registry_get_or_create_calls_setup() -> None:
+    """get_or_create should call setup() after factory creation."""
+    async with MockEnvironment() as env:
+
+        async def create_simple(e: Environment) -> SimpleResource:
+            return SimpleResource()
+
+        env.resources.register_factory("simple", create_simple)
+        resource = await env.resources.get_or_create("simple")
+
+        assert isinstance(resource, SimpleResource)
+        assert resource.setup_called
+
+
+async def test_registry_restore_all_calls_setup_before_restore() -> None:
+    """restore_all should call setup() before restore_state()."""
+
+    class SetupOrderResource(BaseResource):
+        def __init__(self) -> None:
+            self.call_order: list[str] = []
+
+        async def setup(self) -> None:
+            self.call_order.append("setup")
+
+        async def restore_state(self, state: dict) -> None:
+            self.call_order.append("restore")
+
+        async def export_state(self) -> dict:
+            return {}
+
+        async def close(self) -> None:
+            pass
+
+    pending_state = ResourceRegistryState(entries={"ordered": ResourceEntry(state={})})
+
+    async def create_ordered(e: Environment) -> SetupOrderResource:
+        return SetupOrderResource()
+
+    async with MockEnvironment(
+        resource_state=pending_state,
+        resource_factories={"ordered": create_ordered},
+    ) as env:
+        resource = env.resources.get_typed("ordered", SetupOrderResource)
+        assert resource is not None
+        assert resource.call_order == ["setup", "restore"]
+
+
+async def test_registry_restore_one_calls_setup_before_restore() -> None:
+    """restore_one should call setup() before restore_state()."""
+
+    class SetupOrderResource(BaseResource):
+        def __init__(self) -> None:
+            self.call_order: list[str] = []
+
+        async def setup(self) -> None:
+            self.call_order.append("setup")
+
+        async def restore_state(self, state: dict) -> None:
+            self.call_order.append("restore")
+
+        async def export_state(self) -> dict:
+            return {}
+
+        async def close(self) -> None:
+            pass
+
+    pending_state = ResourceRegistryState(entries={"ordered": ResourceEntry(state={})})
+
+    async def create_ordered(e: Environment) -> SetupOrderResource:
+        return SetupOrderResource()
+
+    async with MockEnvironment() as env:
+        env.resources._pending_state = pending_state
+        env.resources.register_factory("ordered", create_ordered)
+
+        await env.resources.restore_one("ordered")
+
+        resource = env.resources.get_typed("ordered", SetupOrderResource)
+        assert resource is not None
+        assert resource.call_order == ["setup", "restore"]
+
+
 # --- get_toolsets Tests ---
 
 
@@ -638,6 +729,9 @@ async def test_registry_close_all_with_exception() -> None:
         def close(self) -> None:
             raise RuntimeError("Close failed")
 
+        async def setup(self) -> None:
+            pass
+
         async def get_toolsets(self) -> list:
             return []
 
@@ -699,6 +793,9 @@ async def test_registry_close_all_parallel_with_exception() -> None:
 
         def close(self) -> None:
             raise RuntimeError("Failed to close")
+
+        async def setup(self) -> None:
+            pass
 
         async def get_toolsets(self) -> list:
             return []

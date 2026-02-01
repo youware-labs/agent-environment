@@ -19,9 +19,13 @@ class SimpleResource:
 
     def __init__(self) -> None:
         self.closed = False
+        self.setup_called = False
 
     def close(self) -> None:
         self.closed = True
+
+    async def setup(self) -> None:
+        self.setup_called = True
 
     async def get_toolsets(self) -> list[Any]:
         return []
@@ -33,7 +37,11 @@ class ResumableMockResource:
     def __init__(self, initial_data: str = "") -> None:
         self.data = initial_data
         self.closed = False
+        self.setup_called = False
         self._restored_state: dict[str, Any] | None = None
+
+    async def setup(self) -> None:
+        self.setup_called = True
 
     async def export_state(self) -> dict[str, Any]:
         return {"data": self.data}

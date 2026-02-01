@@ -44,6 +44,14 @@ class Resource(Protocol):
         """Close the resource. Can be sync or async."""
         ...
 
+    async def setup(self) -> None:
+        """Initialize the resource after creation.
+
+        Called by ResourceRegistry after factory creation, before restore_state().
+        Use for async initialization like starting processes or establishing connections.
+        """
+        ...
+
     async def get_toolsets(self) -> list[Any]:
         """Return toolsets provided by this resource.
 

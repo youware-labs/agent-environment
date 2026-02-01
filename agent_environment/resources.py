@@ -83,6 +83,15 @@ class BaseResource(ABC):
         """Close the resource and release any held resources."""
         ...
 
+    async def setup(self) -> None:  # noqa: B027
+        """Initialize the resource after creation.
+
+        Called by ResourceRegistry after factory creation, before restore_state().
+        Override to perform async initialization (start browser, connect to DB).
+        Default implementation does nothing.
+        """
+        pass  # Default: no-op
+
     async def get_toolsets(self) -> list[Any]:
         """Return toolsets provided by this resource.
 
@@ -239,6 +248,7 @@ class ResourceRegistry:
             raise KeyError(f"No resource or factory registered for key: {key}")
 
         resource = await self._factories[key](self.env)
+        await resource.setup()
         self._resources[key] = resource
         return resource
 
@@ -284,7 +294,8 @@ class ResourceRegistry:
 
         For each entry in pending state:
         1. Create resource via registered factory (factory receives Environment)
-        2. Call restore_state() if resource implements ResumableResource
+        2. Call setup() to initialize the resource
+        3. Call restore_state() if resource implements ResumableResource
 
         This method is idempotent - calling it multiple times has no effect
         after the first successful call (pending_state is cleared).
@@ -307,6 +318,7 @@ class ResourceRegistry:
 
             # Create resource via factory (pass environment)
             resource = await self._factories[key](self.env)
+            await resource.setup()
             self._resources[key] = resource
 
             # Restore state if resumable
@@ -342,6 +354,7 @@ class ResourceRegistry:
             raise KeyError(f"No factory registered for resource: {key}")
 
         resource = await self._factories[key](self.env)
+        await resource.setup()
         self._resources[key] = resource
 
         if isinstance(resource, ResumableResource):
