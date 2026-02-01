@@ -411,20 +411,41 @@ class ResourceRegistry:
         """Return list of resource keys."""
         return list(self._resources.keys())
 
-    async def close_all(self) -> None:
-        """Close all resources in reverse registration order.
+    async def close_all(self, *, parallel: bool = False) -> None:
+        """Close all resources.
+
+        Args:
+            parallel: If True, close resources concurrently using asyncio.gather.
+                If False (default), close in reverse registration order sequentially.
 
         Uses best-effort cleanup - continues even if individual
         resources fail to close. Handles both sync and async close().
         Also clears registered factories.
         """
-        for resource in reversed(list(self._resources.values())):
-            try:
-                result = resource.close()
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception:  # noqa: S110
-                pass  # Best effort cleanup
+        if parallel:
+            # Close all resources concurrently
+            async def _close_resource(resource: Resource) -> None:
+                try:
+                    result = resource.close()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:  # noqa: S110
+                    pass  # Best effort cleanup
+
+            await asyncio.gather(
+                *[_close_resource(r) for r in self._resources.values()],
+                return_exceptions=True,
+            )
+        else:
+            # Close in reverse registration order (sequential)
+            for resource in reversed(list(self._resources.values())):
+                try:
+                    result = resource.close()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:  # noqa: S110
+                    pass  # Best effort cleanup
+
         self._resources.clear()
         self._factories.clear()
 

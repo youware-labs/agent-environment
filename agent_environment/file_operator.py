@@ -5,14 +5,14 @@ system operations, supporting both local and remote backends.
 """
 
 import shutil
-import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import anyio
 
-from agent_environment.protocols import TmpFileOperator
+from agent_environment.protocols import DEFAULT_CHUNK_SIZE, TmpFileOperator
 from agent_environment.types import FileStat, TruncatedResult
 
 # Default directories to skip but mark in file tree
@@ -70,11 +70,18 @@ class LocalTmpFileOperator:
         length: int | None = None,
     ) -> bytes:
         resolved = self._resolve(path)
-        content = await anyio.Path(resolved).read_bytes()
-        if offset > 0 or length is not None:
-            end = None if length is None else offset + length
-            content = content[offset:end]
-        return content
+        # Optimize: use seek instead of reading entire file then slicing
+        if offset == 0 and length is None:
+            # Fast path: read entire file
+            return await anyio.Path(resolved).read_bytes()
+
+        # Use seek for partial reads
+        async with await anyio.open_file(resolved, "rb") as f:
+            if offset > 0:
+                await f.seek(offset)
+            if length is None:
+                return await f.read()
+            return await f.read(length)
 
     async def write_file(
         self,
@@ -118,6 +125,24 @@ class LocalTmpFileOperator:
         resolved = self._resolve(path)
         entries = [entry.name async for entry in anyio.Path(resolved).iterdir()]
         return sorted(entries)
+
+    async def list_dir_with_types(self, path: str) -> list[tuple[str, bool]]:
+        """List directory contents with type information.
+
+        More efficient than calling list_dir + is_dir for each entry.
+
+        Args:
+            path: Directory path.
+
+        Returns:
+            List of (name, is_dir) tuples, sorted alphabetically.
+        """
+        resolved = self._resolve(path)
+        result: list[tuple[str, bool]] = []
+        async for entry in anyio.Path(resolved).iterdir():
+            is_dir = await entry.is_dir()
+            result.append((entry.name, is_dir))
+        return sorted(result, key=lambda x: x[0])
 
     async def exists(self, path: str) -> bool:
         return await anyio.Path(self._resolve(path)).exists()
@@ -163,6 +188,49 @@ class LocalTmpFileOperator:
                 matches.append(str(p))
         return sorted(matches)
 
+    async def read_bytes_stream(
+        self,
+        path: str,
+        *,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read file content as an async stream of bytes.
+
+        Memory-efficient way to read large files.
+
+        Args:
+            path: Path to file.
+            chunk_size: Size of each chunk in bytes (default: 64KB).
+
+        Yields:
+            Chunks of bytes from the file.
+        """
+        resolved = self._resolve(path)
+        async with await anyio.open_file(resolved, "rb") as f:
+            while True:
+                chunk = await f.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+    async def write_bytes_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write bytes stream to file.
+
+        Memory-efficient way to write large files.
+
+        Args:
+            path: Path to file.
+            stream: Async iterator yielding bytes chunks.
+        """
+        resolved = self._resolve(path)
+        async with await anyio.open_file(resolved, "wb") as f:
+            async for chunk in stream:
+                await f.write(chunk)
+
     async def truncate_to_tmp(
         self,
         content: str,
@@ -198,11 +266,18 @@ class FileOperator(ABC):
     Provides common initialization logic for path validation,
     instructions configuration, and transparent tmp file handling.
 
+    This class has no local system dependencies - it's designed to work
+    with both local and remote backends. Tmp file handling is optional
+    and must be explicitly configured.
+
     Tmp File Handling:
-        When tmp_dir and tmp_file_operator are provided, operations on
+        When tmp_dir or tmp_file_operator is provided, operations on
         paths under tmp_dir are automatically delegated to tmp_file_operator.
         Subclasses only need to implement _xxx_impl methods and don't need
         to be aware of tmp handling.
+
+        If neither tmp_dir nor tmp_file_operator is provided, tmp handling
+        is disabled and cross-boundary operations will not be available.
 
     Example:
         ```python
@@ -233,6 +308,7 @@ class FileOperator(ABC):
         tmp_dir: Path | None = None,
         tmp_file_operator: TmpFileOperator | None = None,
         skip_instructions: bool = False,
+        default_chunk_size: int = DEFAULT_CHUNK_SIZE,
     ):
         """Initialize FileOperator.
 
@@ -243,9 +319,16 @@ class FileOperator(ABC):
                 default_path is always included in allowed_paths.
             instructions_skip_dirs: Directories to skip in file tree generation.
             instructions_max_depth: Maximum depth for file tree generation.
-            tmp_dir: Directory for temporary files.
-            tmp_file_operator: Operator for tmp file operations.
+            tmp_dir: Directory for temporary files. If provided without
+                tmp_file_operator, a LocalTmpFileOperator will be created.
+            tmp_file_operator: Operator for tmp file operations. Takes
+                precedence over tmp_dir if both are provided.
             skip_instructions: If True, get_context_instructions returns None.
+            default_chunk_size: Default chunk size for streaming operations (default: 64KB).
+
+        Note:
+            If neither tmp_dir nor tmp_file_operator is provided, tmp handling
+            is disabled. Cross-boundary operations will not be available.
         """
         self._default_path = default_path.resolve()
 
@@ -263,15 +346,20 @@ class FileOperator(ABC):
         self._instructions_max_depth = instructions_max_depth
         self._skip_instructions = skip_instructions
 
-        # Auto-create LocalTmpFileOperator with tmp_dir or a random temp directory
+        # Default chunk size for streaming operations
+        self._default_chunk_size = default_chunk_size
+
+        # Tmp file operator setup - no auto-creation to avoid local system dependency
+        # Environment or subclass is responsible for providing tmp_file_operator if needed
         self._owned_tmp_dir: Path | None = None  # Track tmp_dir we created (for cleanup)
         if tmp_file_operator is not None:
             self._tmp_file_operator: TmpFileOperator | None = tmp_file_operator
-        else:
-            if tmp_dir is None:
-                tmp_dir = Path(tempfile.mkdtemp(prefix="pai_agent_"))
-                self._owned_tmp_dir = tmp_dir  # We created it, we must clean it up
+        elif tmp_dir is not None:
+            # Only create LocalTmpFileOperator if tmp_dir is explicitly provided
             self._tmp_file_operator = LocalTmpFileOperator(tmp_dir)
+        else:
+            # No tmp handling - cross-boundary operations will not be available
+            self._tmp_file_operator = None
 
     def _is_tmp_path(self, path: str) -> tuple[bool, str]:
         """Delegate to tmp_file_operator to check if path is managed."""
@@ -347,6 +435,23 @@ class FileOperator(ABC):
         """List directory contents. Implement in subclass."""
         ...
 
+    async def _list_dir_with_types_impl(self, path: str) -> list[tuple[str, bool]]:
+        """List directory with type info. Override for efficiency.
+
+        Default implementation calls list_dir + is_dir for each entry.
+        Subclasses can override for more efficient implementation.
+
+        Returns:
+            List of (name, is_dir) tuples, sorted alphabetically.
+        """
+        entries = await self._list_dir_impl(path)
+        result: list[tuple[str, bool]] = []
+        for name in entries:
+            entry_path = f"{path}/{name}" if path != "." else name
+            is_dir = await self._is_dir_impl(entry_path)
+            result.append((name, is_dir))
+        return sorted(result, key=lambda x: x[0])
+
     @abstractmethod
     async def _exists_impl(self, path: str) -> bool:
         """Check if path exists. Implement in subclass."""
@@ -386,6 +491,50 @@ class FileOperator(ABC):
     async def _glob_impl(self, pattern: str) -> list[str]:
         """Find files matching glob pattern. Implement in subclass."""
         ...
+
+    # Streaming methods - optional to override (default uses read_bytes/write_file)
+
+    async def _read_bytes_stream_impl(
+        self,
+        path: str,
+        *,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read file content as an async stream. Override for efficiency.
+
+        Default implementation loads entire file into memory and yields as single chunk.
+        Subclasses should override this for true streaming with large files.
+
+        Args:
+            path: Path to file.
+            chunk_size: Size of each chunk in bytes (default: 64KB).
+
+        Yields:
+            Chunks of bytes from the file.
+        """
+        # Default: read entire file and yield as single chunk
+        content = await self._read_bytes_impl(path)
+        yield content
+
+    async def _write_bytes_stream_impl(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write bytes stream to file. Override for efficiency.
+
+        Default implementation collects all chunks and writes at once.
+        Subclasses should override this for true streaming with large files.
+
+        Args:
+            path: Path to file.
+            stream: Async iterator yielding bytes chunks.
+        """
+        # Default: collect all chunks and write at once
+        chunks = []
+        async for chunk in stream:
+            chunks.append(chunk)
+        await self._write_file_impl(path, b"".join(chunks))
 
     # --- Public methods with tmp routing ---
 
@@ -467,6 +616,22 @@ class FileOperator(ABC):
             return await self._tmp_file_operator.list_dir(routed_path)  # type: ignore[union-attr]
         return await self._list_dir_impl(path)
 
+    async def list_dir_with_types(self, path: str) -> list[tuple[str, bool]]:
+        """List directory contents with type information.
+
+        More efficient than calling list_dir + is_dir for each entry.
+
+        Args:
+            path: Directory path.
+
+        Returns:
+            List of (name, is_dir) tuples, sorted alphabetically.
+        """
+        is_tmp, routed_path = self._is_tmp_path(path)
+        if is_tmp:  # pragma: no cover
+            return await self._tmp_file_operator.list_dir_with_types(routed_path)  # type: ignore[union-attr]
+        return await self._list_dir_with_types_impl(path)
+
     async def exists(self, path: str) -> bool:
         """Check if path exists."""
         is_tmp, routed_path = self._is_tmp_path(path)
@@ -506,14 +671,16 @@ class FileOperator(ABC):
             # Neither in tmp: delegate to subclass
             await self._move_impl(src, dst)
         else:
-            # Cross-boundary move: read from source, write to dest, delete source
+            # Cross-boundary move: use streaming to avoid loading entire file into memory
             if src_is_tmp:
-                content = await self._tmp_file_operator.read_bytes(src_path)  # type: ignore[union-attr]
-                await self._write_file_impl(dst, content)
+                stream = self._tmp_file_operator.read_bytes_stream(  # type: ignore[union-attr]
+                    src_path, chunk_size=self._default_chunk_size
+                )
+                await self._write_bytes_stream_impl(dst, stream)
                 await self._tmp_file_operator.delete(src_path)  # type: ignore[union-attr]
             else:
-                content = await self._read_bytes_impl(src)
-                await self._tmp_file_operator.write_file(dst_path, content)  # type: ignore[union-attr]
+                stream = self._read_bytes_stream_impl(src, chunk_size=self._default_chunk_size)
+                await self._tmp_file_operator.write_bytes_stream(dst_path, stream)  # type: ignore[union-attr]
                 await self._delete_impl(src)
 
     async def copy(self, src: str, dst: str) -> None:  # pragma: no cover
@@ -526,13 +693,15 @@ class FileOperator(ABC):
             # Neither in tmp: delegate to subclass
             await self._copy_impl(src, dst)
         else:
-            # Cross-boundary copy: read from source, write to dest
+            # Cross-boundary copy: use streaming to avoid loading entire file into memory
             if src_is_tmp:
-                content = await self._tmp_file_operator.read_bytes(src_path)  # type: ignore[union-attr]
-                await self._write_file_impl(dst, content)
+                stream = self._tmp_file_operator.read_bytes_stream(  # type: ignore[union-attr]
+                    src_path, chunk_size=self._default_chunk_size
+                )
+                await self._write_bytes_stream_impl(dst, stream)
             else:
-                content = await self._read_bytes_impl(src)
-                await self._tmp_file_operator.write_file(dst_path, content)  # type: ignore[union-attr]
+                stream = self._read_bytes_stream_impl(src, chunk_size=self._default_chunk_size)
+                await self._tmp_file_operator.write_bytes_stream(dst_path, stream)  # type: ignore[union-attr]
 
     async def stat(self, path: str) -> FileStat:
         """Get file/directory status information."""
@@ -545,6 +714,53 @@ class FileOperator(ABC):
         """Find files matching glob pattern."""
         # Note: glob doesn't support tmp routing as patterns are relative to default_path
         return await self._glob_impl(pattern)
+
+    async def read_bytes_stream(
+        self,
+        path: str,
+        *,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> AsyncIterator[bytes]:
+        """Read file content as an async stream of bytes.
+
+        Memory-efficient way to read large files. This is used internally
+        for cross-boundary copy/move operations.
+
+        Args:
+            path: Path to file.
+            chunk_size: Size of each chunk in bytes (default: 64KB).
+
+        Yields:
+            Chunks of bytes from the file.
+        """
+        is_tmp, routed_path = self._is_tmp_path(path)
+        if is_tmp:  # pragma: no cover
+            return await self._tmp_file_operator.read_bytes_stream(  # type: ignore[union-attr]
+                routed_path, chunk_size=chunk_size
+            )
+        return self._read_bytes_stream_impl(path, chunk_size=chunk_size)
+
+    async def write_bytes_stream(
+        self,
+        path: str,
+        stream: AsyncIterator[bytes],
+    ) -> None:
+        """Write bytes stream to file.
+
+        Memory-efficient way to write large files. This is used internally
+        for cross-boundary copy/move operations.
+
+        Args:
+            path: Path to file.
+            stream: Async iterator yielding bytes chunks.
+        """
+        is_tmp, routed_path = self._is_tmp_path(path)
+        if is_tmp:  # pragma: no cover
+            await self._tmp_file_operator.write_bytes_stream(  # type: ignore[union-attr]
+                routed_path, stream
+            )
+            return
+        await self._write_bytes_stream_impl(path, stream)
 
     async def truncate_to_tmp(
         self,

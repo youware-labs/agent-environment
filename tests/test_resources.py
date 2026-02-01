@@ -584,3 +584,49 @@ async def test_registry_contains() -> None:
         assert "test" not in env.resources
         env.resources.set("test", SimpleResource())
         assert "test" in env.resources
+
+
+async def test_registry_close_all_parallel() -> None:
+    """close_all with parallel=True should close resources concurrently."""
+    async with MockEnvironment() as env:
+        resource1 = SimpleResource()
+        resource2 = SimpleResource()
+        resource3 = MinimalBaseResource()
+
+        env.resources.set("r1", resource1)
+        env.resources.set("r2", resource2)
+        env.resources.set("r3", resource3)
+
+        # Close with parallel=True
+        await env.resources.close_all(parallel=True)
+
+        assert resource1.closed
+        assert resource2.closed
+        assert resource3.closed
+        assert len(env.resources) == 0
+
+
+async def test_registry_close_all_parallel_with_exception() -> None:
+    """Parallel close should continue even if a resource fails."""
+
+    class FailingResource:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            raise RuntimeError("Failed to close")
+
+    async with MockEnvironment() as env:
+        good1 = SimpleResource()
+        bad = FailingResource()
+        good2 = SimpleResource()
+
+        env.resources.set("good1", good1)
+        env.resources.set("bad", bad)
+        env.resources.set("good2", good2)
+
+        # Should not raise
+        await env.resources.close_all(parallel=True)
+
+        assert good1.closed
+        assert good2.closed

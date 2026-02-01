@@ -23,6 +23,7 @@ from agent_environment.file_operator import (
     LocalTmpFileOperator,
 )
 from agent_environment.protocols import (
+    DEFAULT_CHUNK_SIZE,
     InstructableResource,
     Resource,
     ResumableResource,
@@ -40,6 +41,7 @@ from agent_environment.types import FileStat, TruncatedResult
 from agent_environment.utils import generate_filetree
 
 __all__ = [
+    "DEFAULT_CHUNK_SIZE",
     "DEFAULT_INSTRUCTIONS_MAX_DEPTH",
     "DEFAULT_INSTRUCTIONS_SKIP_DIRS",
     "BaseResource",

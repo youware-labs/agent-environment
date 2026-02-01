@@ -30,7 +30,7 @@ def _load_gitignore_spec(gitignore_content: str) -> pathspec.PathSpec | None:
     """Load .gitignore patterns from content."""
     try:
         patterns = gitignore_content.splitlines()
-        return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+        return pathspec.PathSpec.from_lines("gitignore", patterns)
     except Exception:
         return None
 
@@ -78,25 +78,19 @@ async def generate_filetree(  # noqa: C901
         path = rel_path + "/" if is_dir else rel_path
         return gitignore_spec.match_file(path)
 
-    async def _collect_paths(current_path: str, current_depth: int, path_prefix: str = "") -> list[str]:  # noqa: C901
+    async def _collect_paths(current_path: str, current_depth: int, path_prefix: str = "") -> list[str]:
         """Collect all file paths recursively, returning flat paths."""
         result: list[str] = []
         try:
-            entries = await file_op.list_dir(current_path)
-            # Sort: directories first, then files, alphabetically
-            dir_entries = []
-            file_entries = []
-            for name in entries:
-                entry_path = f"{current_path}/{name}" if current_path != "." else name
-                if await file_op.is_dir(entry_path):
-                    dir_entries.append(name)
-                else:
-                    file_entries.append(name)
-            dir_entries.sort()
-            file_entries.sort()
+            # Use list_dir_with_types to avoid N+1 is_dir calls
+            entries_with_types = await file_op.list_dir_with_types(current_path)
+
+            # Separate directories and files
+            dir_entries = [(name, True) for name, is_dir in entries_with_types if is_dir]
+            file_entries = [(name, False) for name, is_dir in entries_with_types if not is_dir]
 
             # Process directories first
-            for name in dir_entries:
+            for name, _ in dir_entries:
                 entry_path = f"{current_path}/{name}" if current_path != "." else name
                 flat_path = f"{path_prefix}{name}" if path_prefix else name
 
@@ -115,7 +109,7 @@ async def generate_filetree(  # noqa: C901
                     result.extend(await _collect_paths(entry_path, current_depth + 1, f"{flat_path}/"))
 
             # Then files
-            for name in file_entries:
+            for name, _ in file_entries:
                 flat_path = f"{path_prefix}{name}" if path_prefix else name
 
                 should_skip, _ = _should_skip_hidden_item(name, False, skip_dirs)
