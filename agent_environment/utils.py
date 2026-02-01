@@ -30,7 +30,7 @@ def _load_gitignore_spec(gitignore_content: str) -> pathspec.PathSpec | None:
     """Load .gitignore patterns from content."""
     try:
         patterns = gitignore_content.splitlines()
-        return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+        return pathspec.PathSpec.from_lines("gitignore", patterns)
     except Exception:
         return None
 
