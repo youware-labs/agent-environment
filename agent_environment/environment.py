@@ -87,8 +87,9 @@ class Environment(ABC):
             ctx = await stack.enter_async_context(
                 AgentContext(env=env)
             )
-            # Optionally add environment toolsets to agent
-            agent = Agent(..., toolsets=[*core_toolsets, *env.toolsets])
+            # Get combined toolsets from environment and resources
+            toolsets = await env.get_toolsets()
+            agent = Agent(..., toolsets=[*core_toolsets, *toolsets])
             ...
         # Resources cleaned up when stack exits
         ```
@@ -147,24 +148,28 @@ class Environment(ABC):
         """
         return self._resources
 
-    @property
-    def toolsets(self) -> list[Any]:
-        """Return optional toolsets provided by this environment.
+    async def get_toolsets(self) -> list[Any]:
+        """Return combined toolsets from environment and all resources.
 
-        Subclasses can populate self._toolsets in _setup() to provide
-        environment-specific tools. These can be injected into an Agent's
-        toolsets list.
+        Collects toolsets from:
+        1. Environment-level toolsets (self._toolsets, set in _setup())
+        2. All registered resources via ResourceRegistry.get_toolsets()
+
+        This is the recommended way to get all available toolsets.
+
+        Returns:
+            Combined list of toolsets from environment and resources.
 
         Example:
             ```python
             async with MyEnvironment() as env:
-                agent = Agent(
-                    ...,
-                    toolsets=[core_toolset, *env.toolsets],
-                )
+                toolsets = await env.get_toolsets()
+                agent = Agent(..., toolsets=[*core_toolsets, *toolsets])
             ```
         """
-        return self._toolsets
+        toolsets = list(self._toolsets)
+        toolsets.extend(await self._resources.get_toolsets())
+        return toolsets
 
     # --- Chaining API for resource factories and state ---
 

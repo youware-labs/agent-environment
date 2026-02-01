@@ -135,10 +135,11 @@ async def test_environment_properties_before_enter() -> None:
         _ = env.shell
 
 
-async def test_environment_toolsets() -> None:
-    """Should return empty toolsets by default."""
+async def test_environment_get_toolsets_empty() -> None:
+    """get_toolsets should return empty list by default."""
     async with MockEnvironment() as env:
-        assert env.toolsets == []
+        toolsets = await env.get_toolsets()
+        assert toolsets == []
 
 
 async def test_environment_with_resource_factory_chaining() -> None:
@@ -193,7 +194,43 @@ async def test_environment_shell_before_enter() -> None:
         _ = env.shell
 
 
-async def test_environment_toolsets_property() -> None:
-    """Environment should expose toolsets property."""
-    async with MockEnvironment() as env:
-        assert isinstance(env.toolsets, list)
+async def test_environment_get_toolsets_combines_env_and_resources() -> None:
+    """get_toolsets should combine environment and resource toolsets."""
+    from agent_environment.resources import BaseResource
+
+    class ToolsetResource(BaseResource):
+        def __init__(self, toolset: object) -> None:
+            self._toolset = toolset
+
+        async def close(self) -> None:
+            pass
+
+        async def get_toolsets(self) -> list:
+            return [self._toolset]
+
+    toolset1 = object()
+    toolset2 = object()
+    env_toolset = object()
+
+    async def factory1(env: Environment) -> ToolsetResource:
+        return ToolsetResource(toolset1)
+
+    async def factory2(env: Environment) -> ToolsetResource:
+        return ToolsetResource(toolset2)
+
+    env = MockEnvironment().with_resource_factory("r1", factory1).with_resource_factory("r2", factory2)
+
+    async with env:
+        # Add environment-level toolset
+        env._toolsets.append(env_toolset)
+
+        # Create resources
+        await env.resources.get_or_create("r1")
+        await env.resources.get_or_create("r2")
+
+        # get_toolsets should combine all
+        toolsets = await env.get_toolsets()
+        assert len(toolsets) == 3
+        assert env_toolset in toolsets
+        assert toolset1 in toolsets
+        assert toolset2 in toolsets
