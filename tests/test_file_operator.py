@@ -389,9 +389,7 @@ async def test_local_tmp_operator_stream_default_chunk_size(tmp_path: Path) -> N
 class LocalFileOperator(FileOperator):
     """A local filesystem FileOperator for testing cross-boundary operations."""
 
-    def __init__(
-        self, default_path: Path, tmp_dir: Path, default_chunk_size: int = DEFAULT_CHUNK_SIZE
-    ) -> None:
+    def __init__(self, default_path: Path, tmp_dir: Path, default_chunk_size: int = DEFAULT_CHUNK_SIZE) -> None:
         super().__init__(
             default_path=default_path,
             allowed_paths=[default_path, tmp_dir],
