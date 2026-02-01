@@ -52,7 +52,7 @@ class Resource(Protocol):
         """
         ...
 
-    async def get_toolsets(self) -> list[Any]:
+    def get_toolsets(self) -> list[Any]:
         """Return toolsets provided by this resource.
 
         Toolsets are tool collections that will be collected by

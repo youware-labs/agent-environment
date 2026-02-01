@@ -27,7 +27,7 @@ class SimpleResource:
     async def setup(self) -> None:
         self.setup_called = True
 
-    async def get_toolsets(self) -> list[Any]:
+    def get_toolsets(self) -> list[Any]:
         return []
 
 
@@ -53,7 +53,7 @@ class ResumableMockResource:
     def close(self) -> None:
         self.closed = True
 
-    async def get_toolsets(self) -> list[Any]:
+    def get_toolsets(self) -> list[Any]:
         return []
 
 

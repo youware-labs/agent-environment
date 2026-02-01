@@ -92,7 +92,7 @@ class BaseResource(ABC):
         """
         pass  # Default: no-op
 
-    async def get_toolsets(self) -> list[Any]:
+    def get_toolsets(self) -> list[Any]:
         """Return toolsets provided by this resource.
 
         Default implementation returns empty list.
@@ -473,7 +473,7 @@ class ResourceRegistry:
         self._resources.clear()
         self._factories.clear()
 
-    async def get_toolsets(self) -> list[Any]:
+    def get_toolsets(self) -> list[Any]:
         """Collect toolsets from all resources.
 
         Iterates through all registered resources and collects their toolsets.
@@ -483,7 +483,7 @@ class ResourceRegistry:
         """
         toolsets: list[Any] = []
         for resource in self._resources.values():
-            toolsets.extend(await resource.get_toolsets())
+            toolsets.extend(resource.get_toolsets())
         return toolsets
 
     async def get_context_instructions(self) -> str | None:

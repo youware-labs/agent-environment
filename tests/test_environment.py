@@ -138,7 +138,7 @@ async def test_environment_properties_before_enter() -> None:
 async def test_environment_get_toolsets_empty() -> None:
     """get_toolsets should return empty list by default."""
     async with MockEnvironment() as env:
-        toolsets = await env.get_toolsets()
+        toolsets = env.get_toolsets()
         assert toolsets == []
 
 
@@ -205,7 +205,7 @@ async def test_environment_get_toolsets_combines_env_and_resources() -> None:
         async def close(self) -> None:
             pass
 
-        async def get_toolsets(self) -> list:
+        def get_toolsets(self) -> list:
             return [self._toolset]
 
     toolset1 = object()
@@ -229,7 +229,7 @@ async def test_environment_get_toolsets_combines_env_and_resources() -> None:
         await env.resources.get_or_create("r2")
 
         # get_toolsets should combine all
-        toolsets = await env.get_toolsets()
+        toolsets = env.get_toolsets()
         assert len(toolsets) == 3
         assert env_toolset in toolsets
         assert toolset1 in toolsets

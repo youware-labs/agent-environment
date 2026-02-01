@@ -88,7 +88,7 @@ class Environment(ABC):
                 AgentContext(env=env)
             )
             # Get combined toolsets from environment and resources
-            toolsets = await env.get_toolsets()
+            toolsets = env.get_toolsets()
             agent = Agent(..., toolsets=[*core_toolsets, *toolsets])
             ...
         # Resources cleaned up when stack exits
@@ -148,7 +148,7 @@ class Environment(ABC):
         """
         return self._resources
 
-    async def get_toolsets(self) -> list[Any]:
+    def get_toolsets(self) -> list[Any]:
         """Return combined toolsets from environment and all resources.
 
         Collects toolsets from:
@@ -163,12 +163,12 @@ class Environment(ABC):
         Example:
             ```python
             async with MyEnvironment() as env:
-                toolsets = await env.get_toolsets()
+                toolsets = env.get_toolsets()
                 agent = Agent(..., toolsets=[*core_toolsets, *toolsets])
             ```
         """
         toolsets = list(self._toolsets)
-        toolsets.extend(await self._resources.get_toolsets())
+        toolsets.extend(self._resources.get_toolsets())
         return toolsets
 
     # --- Chaining API for resource factories and state ---

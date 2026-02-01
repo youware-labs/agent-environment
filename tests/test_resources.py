@@ -520,14 +520,14 @@ async def test_registry_restore_one_calls_setup_before_restore() -> None:
 async def test_base_resource_default_get_toolsets() -> None:
     """BaseResource should return empty list by default."""
     resource = MinimalBaseResource()
-    toolsets = await resource.get_toolsets()
+    toolsets = resource.get_toolsets()
     assert toolsets == []
 
 
 async def test_registry_get_toolsets_empty() -> None:
     """Registry should return empty list when no resources."""
     async with MockEnvironment() as env:
-        toolsets = await env.resources.get_toolsets()
+        toolsets = env.resources.get_toolsets()
         assert toolsets == []
 
 
@@ -541,7 +541,7 @@ async def test_registry_get_toolsets_collects_from_resources() -> None:
         async def close(self) -> None:
             pass
 
-        async def get_toolsets(self) -> list:
+        def get_toolsets(self) -> list:
             return [self._toolset]
 
     async with MockEnvironment() as env:
@@ -559,7 +559,7 @@ async def test_registry_get_toolsets_collects_from_resources() -> None:
         await env.resources.get_or_create("r1")
         await env.resources.get_or_create("r2")
 
-        toolsets = await env.resources.get_toolsets()
+        toolsets = env.resources.get_toolsets()
         assert len(toolsets) == 2
         assert toolset1 in toolsets
         assert toolset2 in toolsets
@@ -575,7 +575,7 @@ async def test_registry_get_toolsets_with_multiple_toolsets() -> None:
         async def close(self) -> None:
             pass
 
-        async def get_toolsets(self) -> list:
+        def get_toolsets(self) -> list:
             return self._toolsets
 
     async with MockEnvironment() as env:
@@ -588,7 +588,7 @@ async def test_registry_get_toolsets_with_multiple_toolsets() -> None:
         env.resources.register_factory("multi", create_multi)
         await env.resources.get_or_create("multi")
 
-        toolsets = await env.resources.get_toolsets()
+        toolsets = env.resources.get_toolsets()
         assert len(toolsets) == 2
         assert toolset_a in toolsets
         assert toolset_b in toolsets
@@ -732,7 +732,7 @@ async def test_registry_close_all_with_exception() -> None:
         async def setup(self) -> None:
             pass
 
-        async def get_toolsets(self) -> list:
+        def get_toolsets(self) -> list:
             return []
 
     async with MockEnvironment() as env:
@@ -797,7 +797,7 @@ async def test_registry_close_all_parallel_with_exception() -> None:
         async def setup(self) -> None:
             pass
 
-        async def get_toolsets(self) -> list:
+        def get_toolsets(self) -> list:
             return []
 
     async with MockEnvironment() as env:
