@@ -389,11 +389,14 @@ async def test_local_tmp_operator_stream_default_chunk_size(tmp_path: Path) -> N
 class LocalFileOperator(FileOperator):
     """A local filesystem FileOperator for testing cross-boundary operations."""
 
-    def __init__(self, default_path: Path, tmp_dir: Path) -> None:
+    def __init__(
+        self, default_path: Path, tmp_dir: Path, default_chunk_size: int = DEFAULT_CHUNK_SIZE
+    ) -> None:
         super().__init__(
             default_path=default_path,
             allowed_paths=[default_path, tmp_dir],
             tmp_dir=tmp_dir,
+            default_chunk_size=default_chunk_size,
         )
 
     async def _read_file_impl(
@@ -637,3 +640,54 @@ async def test_cross_boundary_move_from_tmp_to_main(tmp_path: Path) -> None:
 
     # Original should be deleted from tmp
     assert not await op._tmp_file_operator.exists("source.bin")
+
+
+async def test_file_operator_default_chunk_size(tmp_path: Path) -> None:
+    """FileOperator should use default_chunk_size in cross-boundary operations."""
+    main_dir = tmp_path / "main"
+    tmp_dir = tmp_path / "tmp"
+    main_dir.mkdir()
+    tmp_dir.mkdir()
+
+    # Use a custom small chunk size
+    custom_chunk_size = 256
+
+    # Track chunks read from main operator
+    chunks_read: list[int] = []
+
+    class TrackedFileOperator(LocalFileOperator):
+        """FileOperator that tracks chunk sizes used in streaming."""
+
+        async def _read_bytes_stream_impl(
+            self,
+            path: str,
+            *,
+            chunk_size: int = DEFAULT_CHUNK_SIZE,
+        ) -> AsyncIterator[bytes]:
+            import anyio
+
+            chunks_read.append(chunk_size)
+            resolved = self._default_path / path
+            async with await anyio.open_file(resolved, "rb") as f:
+                while True:
+                    chunk = await f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+
+    op = TrackedFileOperator(main_dir, tmp_dir, default_chunk_size=custom_chunk_size)
+
+    # Create a file in main dir
+    content = b"x" * 1024  # 1KB file
+    await op.write_file("source.bin", content)
+
+    # Copy to tmp (cross-boundary) - should use custom chunk size
+    await op.copy("source.bin", str(tmp_dir / "dest.bin"))
+
+    # Verify chunk size was used
+    assert len(chunks_read) > 0
+    assert chunks_read[-1] == custom_chunk_size
+
+    # Verify content is correct
+    result = await op.read_bytes(str(tmp_dir / "dest.bin"))
+    assert result == content
